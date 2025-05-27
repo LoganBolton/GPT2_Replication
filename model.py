@@ -14,6 +14,7 @@ n_embd = 384
 n_head = 6
 n_layer = 6
 dropout = 0.2
+vocab_size = GPT2Tokenizer.vocab_size
 
 
 class DataLoader:
@@ -114,9 +115,13 @@ class Block(nn.Module):
 class GPT(nn.Module):
     def __init__(self):
         super().__init__()
+        self.vocab_size = vocab_size
+        self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
     
     def forward(self):
         return
 
     def generate(self):
         return
+    
+model = GPT()
