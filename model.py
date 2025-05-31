@@ -4,29 +4,26 @@ import torch.nn.functional as F
 from transformers import GPT2Tokenizer
 
 batch_size = 32 # how many independent sequences will we process in parallel?
-block_size = 256 # what is the maximum context length for predictions?
 max_iters = 5000
 eval_interval = 500
 learning_rate = 3e-4
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 eval_iters = 200
 n_embd = 384
-n_head = 6
-n_layer = 6
+n_head = 1 # simple single head attention
+n_layer = 6 # number of blocks
 dropout = 0.2
 vocab_size = GPT2Tokenizer.vocab_size
+block_size = 256
 
 
 class DataLoader:
     def __init__(self):
-        self.block_size = 1024
         self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.inputs, self.outputs = self.chunk_data(self.block_size)
-        
+        self.inputs, self.outputs = self.chunk_data(block_size)
 
-
-    def chunk_data(self, block_size):
+    def chunk_data(self):
         dataset_path = "/home/log/Github/GPT2_Replication/input.txt"
         with open(dataset_path, 'r') as f:
             content = f.read()
@@ -45,6 +42,41 @@ class DataLoader:
             outputs.append(y)
 
         return inputs, outputs
+
+    def get_splits(self):
+        inputs, outputs = self.chunk_data(self)
+        
+        inputs = torch.tensor(inputs, dtype=torch.long)
+        outputs = torch.tensor(outputs, dtype=torch.long)
+        
+        # Create train/val split (90% train, 10% val)
+        n = len(inputs)
+        split_idx = int(0.9 * n)
+        
+        train_inputs = inputs[:split_idx]
+        train_outputs = outputs[:split_idx]
+        
+        val_inputs = inputs[split_idx:]
+        val_outputs = outputs[split_idx:]
+        
+        return {
+            'train': (train_inputs, train_outputs),
+            'val': (val_inputs, val_outputs)
+        }
+        
+    def get_batch(self, split_data):
+        """Get a random batch from the split data"""
+        inputs, outputs = split_data
+        
+        # Randomly sample batch_size indices
+        batch_indices = torch.randint(0, len(inputs), (batch_size,))
+        
+        # Get the batched data
+        x = inputs[batch_indices]
+        y = outputs[batch_indices]
+        
+        return x.to(device), y.to(device)
+
     
 class Head(nn.Module):
     def __init__(self, head_size):
@@ -53,7 +85,6 @@ class Head(nn.Module):
         self.query = nn.Linear(n_embd, head_size, bias=False)
         self.value = nn.Linear(n_embd, head_size, bias=False)
         self.head_size = n_embd // n_head
-
 
     def forward(self, x):
         """
@@ -105,10 +136,18 @@ class Block(nn.Module):
     def __init__(self):
         super().__init__()
         self.attn = Head(n_embd) # feed in head size
-        self.fward = FeedForward()
+        self.ffwd = FeedForward()
+        
+        self.layer_norm1 = nn.LayerNorm(n_embd)
+        self.layer_norm2 = nn.LayerNorm(n_embd)
     def forward(self,x):
-        x = self.attn(x)
-        x = self.fward(x)
+        res = x
+        x = self.attn(self.layer_norm1(x))
+        x += res
+        
+        res = x
+        x = self.ffwd(self.layer_norm2(x))
+        x += res
         return x
     
     
@@ -116,12 +155,39 @@ class GPT(nn.Module):
     def __init__(self):
         super().__init__()
         self.vocab_size = vocab_size
+        self.max_new_tokens = 100
+        
         self.token_embedding_table = nn.Embedding(vocab_size, n_embd)
+        self.position_embedding_table = nn.Embedding(block_size, n_embd)
+
+        self.blocks = nn.ModuleList([Block() for _ in range(n_layer)])
+        self.layer_norm = nn.LayerNorm(n_embd)
+        self.lm_head = nn.Linear(n_embd, vocab_size, bias=False)
+        
     
-    def forward(self):
-        return
+    def forward(self, idx):
+        # idx is the list of token IDs from the input
+        B, T = idx.shape  # batch size, sequence length
+        tok_emb = self.token_embedding_table[idx]
+        pos_emb = self.position_embedding_table[torch.arange(T, device=idx.device)]
+        x = tok_emb + pos_emb # token embeddings + positional embeddings
+        
+        for block in self.blocks:
+            x = block(x)
+        x = self.layer_norm(x)
+        
+        logits = self.lm_head(x)
+
+        return logits
 
     def generate(self):
+        for _ in range(self.max_new_tokens):
+            pass
         return
+
     
-model = GPT()
+# Initialize everything
+data_loader = DataLoader()
+splits = data_loader.get_splits()
+model = GPT().to(device)
+optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate)
