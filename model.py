@@ -13,38 +13,37 @@ n_embd = 384
 n_head = 1 # simple single head attention
 n_layer = 6 # number of blocks
 dropout = 0.2
-vocab_size = GPT2Tokenizer.vocab_size
+tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+vocab_size = len(tokenizer)
 block_size = 256
 
 
 class DataLoader:
     def __init__(self):
-        self.tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
-        self.tokenizer.pad_token = self.tokenizer.eos_token
-        self.inputs, self.outputs = self.chunk_data(block_size)
+        self.inputs, self.outputs = self.chunk_data()
 
     def chunk_data(self):
-        dataset_path = "/home/log/Github/GPT2_Replication/input.txt"
+        dataset_path = "input.txt"
         with open(dataset_path, 'r') as f:
             content = f.read()
 
-        tokens = self.tokenizer.encode(content, add_special_tokens=False)
+        tokens = tokenizer.encode(content, add_special_tokens=False)
         print(f"Num Tokens: {len(tokens)}")
         print(f"Num of blocks = {len(tokens)//block_size}")
         inputs = []
         outputs = []
 
         for i in range(0, len(tokens) - block_size, block_size):
-            x = tokens[i:i+block_size+1]
+            x = tokens[i:i+block_size]
             inputs.append(x)
 
-            y = tokens[i+1 : i+1+block_size+1]
+            y = tokens[i+1 : i+1+block_size]
             outputs.append(y)
 
         return inputs, outputs
 
     def get_splits(self):
-        inputs, outputs = self.chunk_data(self)
+        inputs, outputs = self.chunk_data()
         
         inputs = torch.tensor(inputs, dtype=torch.long)
         outputs = torch.tensor(outputs, dtype=torch.long)
@@ -168,8 +167,8 @@ class GPT(nn.Module):
     def forward(self, idx):
         # idx is the list of token IDs from the input
         B, T = idx.shape  # batch size, sequence length
-        tok_emb = self.token_embedding_table[idx]
-        pos_emb = self.position_embedding_table[torch.arange(T, device=idx.device)]
+        tok_emb = self.token_embedding_table(idx)
+        pos_emb = self.position_embedding_table(torch.arange(T, device=idx.device))
         x = tok_emb + pos_emb # token embeddings + positional embeddings
         
         for block in self.blocks:
@@ -191,3 +190,23 @@ data_loader = DataLoader()
 splits = data_loader.get_splits()
 model = GPT().to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate)
+
+print(f"Training on {device}")
+print(f"Model has {sum(p.numel() for p in model.parameters())} parameters")
+
+for iter in range(max_iters):
+    x, y = data_loader.get_batch(splits['train'])
+    logits = model(x)
+    
+    B, T, C = logits.shape
+    logits = logits.view(B*T, C)
+    y = y.view(B*T)
+    loss = F.cross_entropy(logits, y)
+    
+    optimizer.zero_grad()
+    loss.backward()
+    optimizer.step()
+    
+    if iter % eval_interval == 0:
+        print(f"Iter {iter}: Loss = {loss.item():.4f}")
+    
