@@ -179,10 +179,27 @@ class GPT(nn.Module):
 
         return logits
 
-    def generate(self):
+    def generate(self, idx):
         for _ in range(self.max_new_tokens):
-            pass
-        return
+            idx_cond = idx if idx.size(1) <= block_size else idx[:, -block_size:]
+            logits = self(idx_cond)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1) # B, T+1
+        return idx
+    def generate_stream(self, idx, max_new_tokens=100):
+        """Generate tokens one at a time, yielding each as it's produced"""
+        for _ in range(max_new_tokens):
+            idx_cond = idx if idx.size(1) <= block_size else idx[:, -block_size:]
+            logits = self(idx_cond)
+            logits = logits[:, -1, :]
+            probs = F.softmax(logits, dim=-1)
+            idx_next = torch.multinomial(probs, num_samples=1)
+            idx = torch.cat((idx, idx_next), dim=1)
+            
+            # Yield the new token
+            yield idx_next
 
     
 # Initialize everything
@@ -191,22 +208,46 @@ splits = data_loader.get_splits()
 model = GPT().to(device)
 optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate)
 
-print(f"Training on {device}")
-print(f"Model has {sum(p.numel() for p in model.parameters())} parameters")
 
-for iter in range(max_iters):
-    x, y = data_loader.get_batch(splits['train'])
-    logits = model(x)
+####### TRAIN #########
+# print(f"Training on {device}")
+# print(f"Model has {sum(p.numel() for p in model.parameters())} parameters")
+# for iter in range(max_iters):
+#     x, y = data_loader.get_batch(splits['train'])
+#     logits = model(x)
     
-    B, T, C = logits.shape
-    logits = logits.view(B*T, C)
-    y = y.view(B*T)
-    loss = F.cross_entropy(logits, y)
+#     B, T, C = logits.shape
+#     logits = logits.view(B*T, C)
+#     y = y.view(B*T)
+#     loss = F.cross_entropy(logits, y)
     
-    optimizer.zero_grad()
-    loss.backward()
-    optimizer.step()
+#     optimizer.zero_grad()
+#     loss.backward()
+#     optimizer.step()
     
-    if iter % eval_interval == 0:
-        print(f"Iter {iter}: Loss = {loss.item():.4f}")
-    
+#     if iter % 100 == 0:
+#         print(f"Iter {iter}: Loss = {loss.item():.4f}")
+
+# torch.save(model.state_dict(), 'gpt_model.pth')
+# print("Model saved to gpt_model.pth")
+
+
+####### INFERENCE #########
+model.load_state_dict(torch.load('gpt_model.pth', map_location=device))
+model.eval()
+
+prompt = "Hello"
+input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
+
+print(prompt, end='', flush=True)
+with torch.no_grad():
+    for token_id in model.generate_stream(input_ids, max_new_tokens=1000):
+        if token_id.dim() > 0:  # It's a single token
+            token = tokenizer.decode(token_id[0], skip_special_tokens=True)
+            print(token, end='', flush=True)
+
+# with torch.no_grad():
+#     generated = model.generate(input_ids)
+
+# text = tokenizer.decode(generated[0], skip_special_tokens=True)
+# print(text)
