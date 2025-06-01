@@ -52,14 +52,7 @@ class QADataset(Dataset):
         context = item.get('context', '')
         response = item.get('response', '')
         
-        # Simple concatenation without formatting
-        if context:
-            # If there's context, include it between instruction and response
-            text = f"{instruction} {context} {response}"
-        else:
-            # Otherwise just instruction + response
-            text = f"{instruction} {response}"
-        
+        text = f"### USER: {instruction}\n\n### Answer: {response}" 
         # Add EOS token for clear sequence boundaries
         text += tokenizer.eos_token
         
@@ -71,15 +64,15 @@ class QADataset(Dataset):
     def __getitem__(self, idx):
         tokens = self.examples[idx]
         
-        # Pad or truncate to block_size
-        if len(tokens) < self.block_size:
-            # Pad with padding tokens (not EOS tokens)
+        # Ensure all sequences are exactly block_size length
+        if len(tokens) > self.block_size:
+            # Truncate to block_size
+            tokens = tokens[:self.block_size]
+        elif len(tokens) < self.block_size:
+            # Pad to block_size
             pad_length = self.block_size - len(tokens)
             tokens = tokens + [self.tokenizer.pad_token_id] * pad_length
-        else:
-            # Truncate but keep the last position for EOS
-            tokens = tokens[:self.block_size-1] + [self.tokenizer.eos_token_id]
-        
+    
         # Convert to tensor
         tokens = torch.tensor(tokens, dtype=torch.long)
         
@@ -94,7 +87,7 @@ class QADataLoader:
                  train_split=0.9, 
                  batch_size=8, 
                  block_size=256,
-                 num_workers=2):
+                 num_workers=0):
         
         self.batch_size = batch_size
         self.block_size = block_size
