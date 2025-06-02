@@ -20,7 +20,6 @@ vocab_size = len(tokenizer)
 block_size = 512
 batch_size = 16  # Adjust based on your GPU memory
 
-
     
 class Head(nn.Module):
     def __init__(self, head_size):
@@ -193,88 +192,3 @@ def estimate_loss(model, train_loader, val_loader, eval_iters, device):
     
     model.train()
     return out
-    
-# Initialize everything
-# data_loader = DataLoader()
-# splits = data_loader.get_splits()
-# splits = data_loader.get_loaders
-
-model = GPT().to(device)
-optimizer = torch.optim.AdamW(model.parameters(), lr = learning_rate)
-
-# max_iters = 100_000
-# data_loader = QADataLoader()
-# train_loader, val_loader = data_loader.get_loaders()
-
-# ####### TRAIN #########
-# print(f"Training on {device}")
-# print(f"Model has {sum(p.numel() for p in model.parameters())} parameters")
-
-# step = 0
-# while step < max_iters:
-#     for i, (x, y) in enumerate(train_loader):
-#         x = x.to(device)
-#         y = y.to(device)
-#         logits = model(x)
-        
-#         B, T, C = logits.shape
-#         logits = logits.view(B*T, C)
-#         y = y.view(B*T)
-#         loss = F.cross_entropy(logits, y)
-        
-#         optimizer.zero_grad()
-#         loss.backward()
-#         optimizer.step()
-        
-#         step += 1
-        
-#         # Print training loss every 200 steps
-#         if step % 200 == 0:
-#             print(f"Step {step}: Train Loss = {loss.item():.4f}")
-        
-#         # Evaluate and print both train and val loss every eval_interval steps
-#         if step % eval_interval == 0:
-#             losses = estimate_loss(model, train_loader, val_loader, eval_iters, device)
-#             print(f"Step {step}: Train Loss = {losses['train']:.4f}, Val Loss = {losses['val']:.4f}")
-        
-#         if step >= max_iters:
-#             break
-
-#         if step % 2500 == 0:
-#             save_dir = f"checkpoints/gpt_{step}"
-#             torch.save(model.state_dict(), save_dir)
-#             print(f"Model saved to {save_dir}")
-
-# torch.save(model.state_dict(), 'gpt_model.pth')
-# print("Model saved to gpt_model.pth")
-
-
-####### INFERENCE #########
-weights = "checkpoints/gpt_5000"
-model.load_state_dict(torch.load(weights, map_location=device))
-model.eval()
-
-prompt = "### USER: What does it mean to be human\n\n### Answer: "
-
-# print(prompt, end='', flush=True)
-# with torch.no_grad():
-#     for token_id in model.generate_stream(input_ids, max_new_tokens=1000):
-#         if token_id.dim() > 0:  # It's a single token
-#             token = tokenizer.decode(token_id[0], skip_special_tokens=True)
-#             print(token, end='', flush=True)
-
-# Collect all token_ids into a list
-input_ids = tokenizer.encode(prompt, return_tensors='pt').to(device)
-
-print(prompt, end='', flush=True)
-with torch.no_grad():
-    for token_id in model.generate_stream(input_ids, max_new_tokens=1000):
-        token_str = tokenizer.decode(token_id[0], skip_special_tokens=True)
-        print(token_str, end='', flush=True)
-
-
-# with torch.no_grad():
-#     generated = model.generate(input_ids)
-
-# text = tokenizer.decode(generated[0], skip_special_tokens=True)
-# print(text)
