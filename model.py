@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from qadata import *
+from data.qadata import *
 
 eval_interval = 500
 learning_rate = 1e-4
@@ -192,3 +192,38 @@ def estimate_loss(model, train_loader, val_loader, eval_iters, device):
     
     model.train()
     return out
+
+def estimate_loss_streaming(model, train_loader, val_loader, eval_iters, device):
+    """Estimate loss on streaming datasets"""
+    model.eval()
+    losses = {}
+    
+    for split, loader in [('train', train_loader), ('val', val_loader)]:
+        total_loss = 0  # 🟢 SIMPLE running sum (no tensor allocation)
+        count = 0       # 🟢 COUNT actual iterations
+        
+        # Get a fresh iterator
+        data_iter = iter(loader)
+        
+        for _ in range(eval_iters):
+            try:
+                x, y = next(data_iter)
+                x, y = x.to(device), y.to(device)
+                
+                with torch.no_grad():
+                    logits = model(x)
+                    B, T, C = logits.shape
+                    logits = logits.view(B*T, C)
+                    y = y.view(B*T)
+                    loss = F.cross_entropy(logits, y)
+                    total_loss += loss.item()  # 🟢 ADD to running sum
+                    count += 1                 # 🟢 INCREMENT counter
+                    
+            except StopIteration:
+                # If we run out of data, break  # 🟢 STOP instead of restarting
+                break
+        
+        losses[split] = total_loss / max(count, 1)  # 🟢 SAFE division
+    
+    model.train()
+    return losses

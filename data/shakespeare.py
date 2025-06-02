@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from transformers import GPT2Tokenizer
-from qadata import *
+from data.qadata import *
 
 eval_interval = 500
 learning_rate = 3e-4

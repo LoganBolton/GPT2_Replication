@@ -80,8 +80,8 @@ class QADataset(Dataset):
         return tokens[:-1], tokens[1:]
 
 
-class QADataLoader:
-    """Modern DataLoader wrapper for QA datasets"""
+class QaDataLoader:
+    """Modern DataLoader wrapper for Reddit datasets"""
     
     def __init__(self, dataset_name="databricks/databricks-dolly-15k", 
                  train_split=0.9, 
