@@ -25,144 +25,6 @@ block_size = 512
 batch_size = 32  # Adjust based on your GPU memory
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
-class RedditDataset(Dataset):
-    """Dataset for Q&A style data with proper formatting"""
-    
-    def __init__(self, data, tokenizer, block_size, split='train'):
-        self.tokenizer = tokenizer
-        self.block_size = block_size
-        self.examples = []
-        
-        # Process and tokenize all examples
-        for item in data:
-            # Format the QA pair
-            text = self._format_qa_pair(item)
-            
-            # Tokenize without adding special tokens automatically
-            tokens = tokenizer.encode(
-                text, 
-                truncation=True, 
-                max_length=block_size,
-                add_special_tokens=False  # Don't add BOS automatically
-            )
-            
-            # Manually add BOS at the beginning
-            tokens = [tokenizer.bos_token_id] + tokens
-            
-            # Only keep examples that are long enough
-            self.examples.append(tokens)
-    
-    def _format_qa_pair(self, item):
-        """Format a single QA pair - just concatenate instruction and response"""
-        instruction = item.get('instruction', '')
-        response = item.get('response', '')
-        
-        text = f"### USER: {instruction}\n\n### Answer: {response}" 
-        # Add EOS token for clear sequence boundaries
-        text += tokenizer.eos_token
-        
-        return text
-    
-    def __len__(self):
-        return len(self.examples)
-    
-    def __getitem__(self, idx):
-        tokens = self.examples[idx]
-        
-        # Ensure all sequences are exactly block_size length
-        if len(tokens) > self.block_size:
-            # Truncate to block_size
-            tokens = tokens[:self.block_size]
-        elif len(tokens) < self.block_size:
-            # Pad to block_size
-            pad_length = self.block_size - len(tokens)
-            tokens = tokens + [self.tokenizer.pad_token_id] * pad_length
-    
-        # Convert to tensor
-        tokens = torch.tensor(tokens, dtype=torch.long)
-        
-        # For language modeling, input is tokens[:-1], target is tokens[1:]
-        return tokens[:-1], tokens[1:]
-
-
-class RedditDataLoader:
-    """Modern DataLoader wrapper for QA datasets"""
-    
-    def __init__(self, dataset_name="webis/tldr-17", 
-                 train_split=0.9, 
-                 batch_size=8, 
-                 block_size=512,
-                 num_workers=0):
-        
-        self.batch_size = batch_size
-        self.block_size = block_size
-        self.num_workers = num_workers
-        
-        # Load dataset from HuggingFace
-        print(f"Loading dataset: {dataset_name}")
-        dataset = load_dataset(dataset_name)
-        
-        # The dolly dataset only has a 'train' split, so we need to create train/val
-        full_data = dataset['train']
-        
-        # Shuffle and split
-        indices = list(range(len(full_data)))
-        random.shuffle(indices)
-        
-        split_idx = int(len(indices) * train_split)
-        train_indices = indices[:split_idx]
-        val_indices = indices[split_idx:]
-        
-        # Create datasets
-        self.train_dataset = RedditDataset(
-            data=full_data.select(train_indices),
-            tokenizer=tokenizer,
-            block_size=block_size,
-            split='train'
-        )
-        
-        self.val_dataset = RedditDataset(
-            data=full_data.select(val_indices),
-            tokenizer=tokenizer,
-            block_size=block_size,
-            split='val'
-        )
-        
-        # Create DataLoaders
-        self.train_loader = DataLoader(
-            self.train_dataset,
-            batch_size=batch_size,
-            shuffle=True,
-            num_workers=num_workers,
-            pin_memory=True if device == 'cuda' else False
-        )
-        
-        self.val_loader = DataLoader(
-            self.val_dataset,
-            batch_size=batch_size,
-            shuffle=False,
-            num_workers=num_workers,
-            pin_memory=True if device == 'cuda' else False
-        )
-    
-    def get_batch(self, split='train'):
-        """Get a single batch for compatibility with old code"""
-        loader = self.train_loader if split == 'train' else self.val_loader
-        
-        # Get one batch from the iterator
-        try:
-            x, y = next(iter(loader))
-        except StopIteration:
-            # If iterator is exhausted, create a new one
-            x, y = next(iter(loader))
-        
-        return x.to(device), y.to(device)
-    
-    def get_loaders(self):
-        """Get the full DataLoaders for training loops"""
-        return self.train_loader, self.val_loader
-
-
 
 class StreamingRedditDataset(IterableDataset):
     """
@@ -242,8 +104,12 @@ class StreamingRedditDataset(IterableDataset):
         Process a single data item - this is where ONE item gets tokenized
         """
         try:
-            # Format the text (same as before)
-            text = self._format_qa_pair(item)
+            # Extract the body text from TLDR-17 dataset
+            text = self._extract_body_text(item)
+            
+            # Skip if no valid text
+            if not text or len(text.strip()) < 50:  # Skip very short texts
+                return None
             
             # Tokenize this ONE item
             tokens = self.tokenizer.encode(
@@ -277,16 +143,32 @@ class StreamingRedditDataset(IterableDataset):
             print(f"Error processing item: {e}")
             return None
     
-    def _format_qa_pair(self, item):
-        """Format a QA pair - same as before"""
-        # Handle different possible field names
-        instruction = item.get('instruction', item.get('prompt', item.get('question', '')))
-        response = item.get('response', item.get('completion', item.get('answer', '')))
-        
-        # Create formatted text
-        text = f"### USER: {instruction}\n\n### ASSISTANT: {response}"
-        text += self.tokenizer.eos_token
-        return text
+    def _extract_body_text(self, item):
+        """
+        Extract body text from TLDR-17 dataset item
+        """
+        try:
+            # TLDR-17 dataset structure - use 'body' field specifically
+            body = item.get('body', '')
+            
+            # Clean up the text
+            if isinstance(body, str) and body.strip():
+                # Remove common Reddit artifacts
+                text = body.strip()
+                
+                # Remove [deleted] and [removed] posts
+                if text.lower() in ['[deleted]', '[removed]', '']:
+                    return None
+                    
+                # Add EOS token at the end
+                text += self.tokenizer.eos_token
+                return text
+            
+            return None
+            
+        except Exception as e:
+            print(f"Error extracting body text: {e}")
+            return None
 
 
 class StreamingDataManager:
@@ -344,3 +226,33 @@ class StreamingDataManager:
             num_workers=0,
             pin_memory=True if device == 'cuda' else False
         )
+
+
+# Debug function to test the data loading
+def debug_tldr_dataset():
+    """
+    Quick debug function to see what TLDR-17 data looks like
+    """
+    print("=== DEBUGGING TLDR-17 DATASET ===")
+    
+    # Load a few samples to see the structure
+    dataset = load_dataset("webis/tldr-17", streaming=True)
+    train_stream = dataset['train']
+    
+    print("First 3 samples from TLDR-17:")
+    for i, item in enumerate(train_stream):
+        if i >= 3:
+            break
+        print(f"\nSample {i}:")
+        print(f"Keys: {list(item.keys())}")
+        
+        # Print each field
+        for key, value in item.items():
+            if isinstance(value, str):
+                preview = value[:200] + "..." if len(value) > 200 else value
+                print(f"{key}: {preview}")
+            else:
+                print(f"{key}: {value}")
+        print("-" * 50)
+
+debug_tldr_dataset()
